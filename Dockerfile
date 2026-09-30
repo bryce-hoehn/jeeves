@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:0.12.6-python3.14-bookworm-slim
+FROM ghcr.io/astral-sh/uv:0.12.21
 
 WORKDIR /app
 

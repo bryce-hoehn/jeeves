@@ -59,9 +59,11 @@ commands available inside the container. To persist the raidbots cache
 
 ## Usage
 
-- Mention the bot (or DM it, or reply to one of its messages) to chat.
-- The bot remembers the conversation per channel.
-- Send `!reset` (as a mention) to start a fresh conversation.
+- Mention the bot (or DM it) to chat — each message starts a fresh
+  conversation in a new public thread.
+- Every message inside one of the bot's threads continues that thread's
+  conversation.
+- Send `!reset` in a thread to start that conversation over.
 
 ## Undermine Exchange tools
 

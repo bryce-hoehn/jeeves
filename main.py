@@ -18,33 +18,56 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
 
 
+def _strip_mention(text: str) -> str:
+    return (
+        text.replace(f"<@{bot.user.id}>", "")
+        .replace(f"<@!{bot.user.id}>", "")
+        .strip()
+    )
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
-    # Only respond to DMs and messages that mention the bot.
-    if message.guild and not bot.user.mentioned_in(message):
-        return
 
-    user_id = bot.user.id
-    text = (
-        message.content.replace(f"<@{user_id}>", "").replace(f"<@!{user_id}>", "").strip()
-    )
-    if not text:
-        return
+    channel = message.channel
 
-    if text == "!reset":
-        agent.conversations.pop(message.channel.id, None)
-        await message.reply("Conversation reset.")
-        return
+    # A message inside one of the bot's threads continues that thread's
+    # conversation. Threads the bot didn't create are left alone.
+    if isinstance(channel, discord.Thread):
+        if channel.owner_id != bot.user.id:
+            return
+        text = _strip_mention(message.content)
+        if text == "!reset":
+            agent.conversations.pop(channel.id, None)
+            await message.reply("Conversation reset.")
+            return
+        if not text:
+            return
+        target = channel
 
-    async with message.channel.typing():
-        reply = await agent.run_agent(message.channel, text)
+    # Otherwise a DM or a mention starts a brand-new conversation: in a
+    # guild that becomes a public thread on the triggering message.
+    else:
+        if message.guild and not bot.user.mentioned_in(message):
+            return
+        text = _strip_mention(message.content)
+        if not text:
+            return
+        if message.guild:
+            name = text.replace("\n", " ")[:100] or "conversation"
+            try:
+                target = await message.create_thread(name=name)
+            except discord.HTTPException as exc:
+                await message.reply(f"could not create a thread: {exc}")
+                return
+        else:
+            target = channel  # DMs keep chatting in the DM channel
+
+    async with target.typing():
+        reply = await agent.run_agent(target, text)
 
     # Discord caps messages at 2000 characters.
     for i in range(0, len(reply), 2000):
-        await message.channel.send(reply[i : i + 2000])
-
-
-if __name__ == "__main__":
-    bot.run(os.getenv("DISCORD_TOKEN"))
+        await target.send(reply[i : i + 2000])

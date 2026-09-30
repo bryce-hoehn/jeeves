@@ -3,8 +3,8 @@
 Built-in tool definitions live in the tools/ package; every @tool-registered
 function there is offered to the model, plus any tools from external MCP
 servers configured in mcp.json. When the model asks to call a tool we run it
-and send the result back. Conversations are tracked per channel via
-previous_response_id.
+and send the result back. Conversations are tracked per thread (or DM channel)
+via previous_response_id.
 """
 
 import inspect
@@ -12,7 +12,7 @@ import json
 import os
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 import mcp_servers
 from tools import TOOLS
@@ -31,7 +31,7 @@ if "wowhead_tooltip" in TOOLS:
         " channel instead of pasting raw stats."
     )
 
-# channel id -> last response id, so each channel keeps its own conversation
+# thread/DM channel id -> last response id, so each conversation keeps context
 conversations: dict[int, str] = {}
 
 
@@ -41,13 +41,28 @@ async def run_agent(channel, user_text: str) -> str:
     await mcp_servers.start()  # no-op without mcp.json
     schemas = [t["schema"] for t in TOOLS.values()] + mcp_servers.schemas
 
-    response = await client.responses.create(
-        model=MODEL,
-        instructions=SYSTEM_PROMPT,
-        input=user_text,
-        previous_response_id=conversations.get(channel_id),
-        tools=schemas,
-    )
+    previous_id = conversations.get(channel_id)
+    try:
+        response = await client.responses.create(
+            model=MODEL,
+            instructions=SYSTEM_PROMPT,
+            input=user_text,
+            previous_response_id=previous_id,
+            tools=schemas,
+        )
+    except BadRequestError as exc:
+        # Stored responses are pruned server-side after a while; a stale
+        # previous_response_id makes every message in the channel 400 until
+        # reset. Drop the history and retry with a fresh conversation.
+        if previous_id is None or "previous_response_id" not in str(exc):
+            raise
+        print(f"dropping expired conversation for channel {channel_id}: {exc}")
+        response = await client.responses.create(
+            model=MODEL,
+            instructions=SYSTEM_PROMPT,
+            input=user_text,
+            tools=schemas,
+        )
 
     # Run any tools the model asked for, then keep going until it replies with text.
     for _ in range(10):

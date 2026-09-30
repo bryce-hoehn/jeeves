@@ -1,0 +1,12 @@
+[project]
+name = "wow-mcp"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "mcp>=2.2.0",
+    "openai>=3.19.2",
+    "py-cord>=2.8.1",
+    "python-dotenv>=1.2.3",
+]

@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    image: wow-mcp
+    container_name: wow-mcp
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # Persist the raidbots cache (~50 MB after the first item search)
+      # so it survives container recreations.
+      - raidbots-cache:/root/.cache/raidbots
+      # Optional external MCP servers. Uncomment if you use mcp.json —
+      # stdio server commands must be available inside the container.
+      # - ./mcp.json:/app/mcp.json:ro
+
+volumes:
+  raidbots-cache:

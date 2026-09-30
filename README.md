@@ -34,17 +34,28 @@ uv run main.py
 
 ## Docker
 
+With [`docker-compose.yml`](docker-compose.yml):
+
+```sh
+docker compose up -d --build
+```
+
+Or plain Docker:
+
 ```sh
 docker build -t wow-mcp .
 docker run -d --name wow-mcp --env-file .env wow-mcp
 ```
 
 Secrets come from the environment (`--env-file .env`, or `-e DISCORD_TOKEN=...`),
-never baked into the image. If you use `mcp.json`, mount it in
-(`-v ./mcp.json:/app/mcp.json`) — note that stdio servers listed there must
-have their commands available inside the container. To persist the raidbots
-cache (~50 MB after the first item search), add
-`-v raidbots-cache:/root/.cache/raidbots`.
+never baked into the image. The image includes a from-source build of the simc
+CLI (multi-stage, in the [`Dockerfile`](Dockerfile)); pin a release tag with
+`--build-arg SIMC_REF=<tag>` instead of tracking the development branch. If you
+use `mcp.json`, mount it in (`-v ./mcp.json:/app/mcp.json` — in compose,
+uncomment the volume) — note that stdio servers listed there must have their
+commands available inside the container. To persist the raidbots cache
+(~50 MB after the first item search), add
+`-v raidbots-cache:/root/.cache/raidbots` (already a named volume in compose).
 
 ## Usage
 
@@ -81,9 +92,11 @@ non-commodities sell per realm — the model picks the matching tool.
 ## SimulationCraft tools
 
 [`tools/simc.py`](tools/simc.py) drives the
-[SimulationCraft](https://github.com/simulationcraft/simc) CLI. Install simc
-yourself (on Linux, build from source; see the repo's HowToBuild wiki) and
-make sure `simc` is on PATH, or point `SIMC_PATH` at the executable in `.env`:
+[SimulationCraft](https://github.com/simulationcraft/simc) CLI. The Docker
+image builds simc from source, so it is on PATH in containers; outside Docker,
+install it yourself (on Linux, build from source; see the repo's HowToBuild
+wiki) and make sure `simc` is on PATH, or point `SIMC_PATH` at the executable
+in `.env`:
 
 ```
 SIMC_PATH=/path/to/simc

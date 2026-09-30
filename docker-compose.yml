@@ -1,6 +1,10 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      # Pin a simc release tag instead of the development branch:
+      # args:
+      #   SIMC_REF: "11.2.0"
     image: wow-mcp
     container_name: wow-mcp
     restart: unless-stopped

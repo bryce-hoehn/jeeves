@@ -4,7 +4,8 @@ Built-in tool definitions live in the tools/ package; every @tool-registered
 function there is offered to the model, plus any tools from external MCP
 servers configured in mcp.json. When the model asks to call a tool we run it
 and send the result back. Conversations are tracked per thread (or DM channel)
-via previous_response_id.
+as an in-memory transcript, sent in full each turn — server-side response
+storage (previous_response_id) is unreliable behind proxies.
 """
 
 import inspect
@@ -12,7 +13,7 @@ import json
 import os
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI, BadRequestError
+from openai import AsyncOpenAI
 
 import mcp_servers
 from tools import TOOLS
@@ -31,8 +32,9 @@ if "wowhead_tooltip" in TOOLS:
         " channel instead of pasting raw stats."
     )
 
-# thread/DM channel id -> last response id, so each conversation keeps context
-conversations: dict[int, str] = {}
+# thread/DM channel id -> transcript items, so each conversation keeps context
+conversations: dict[int, list] = {}
+MAX_HISTORY_ITEMS = 60
 
 
 async def run_agent(channel, user_text: str) -> str:
@@ -41,28 +43,14 @@ async def run_agent(channel, user_text: str) -> str:
     await mcp_servers.start()  # no-op without mcp.json
     schemas = [t["schema"] for t in TOOLS.values()] + mcp_servers.schemas
 
-    previous_id = conversations.get(channel_id)
-    try:
-        response = await client.responses.create(
-            model=MODEL,
-            instructions=SYSTEM_PROMPT,
-            input=user_text,
-            previous_response_id=previous_id,
-            tools=schemas,
-        )
-    except BadRequestError as exc:
-        # Stored responses are pruned server-side after a while; a stale
-        # previous_response_id makes every message in the channel 400 until
-        # reset. Drop the history and retry with a fresh conversation.
-        if previous_id is None or "previous_response_id" not in str(exc):
-            raise
-        print(f"dropping expired conversation for channel {channel_id}: {exc}")
-        response = await client.responses.create(
-            model=MODEL,
-            instructions=SYSTEM_PROMPT,
-            input=user_text,
-            tools=schemas,
-        )
+    items = conversations.setdefault(channel_id, [])
+    items.append({"role": "user", "content": user_text})
+    response = await client.responses.create(
+        model=MODEL,
+        instructions=SYSTEM_PROMPT,
+        input=items,
+        tools=schemas,
+    )
 
     # Run any tools the model asked for, then keep going until it replies with text.
     for _ in range(10):
@@ -87,6 +75,15 @@ async def run_agent(channel, user_text: str) -> str:
                     result = await mcp_servers.call(item.name, args)
             except Exception as exc:  # let the model see and report the error
                 result = f"Error: {exc}"
+            # Echo the call back so the API can pair it with the output.
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": item.call_id,
+                    "name": item.name,
+                    "arguments": item.arguments,
+                }
+            )
             outputs.append(
                 {
                     "type": "function_call_output",
@@ -95,12 +92,17 @@ async def run_agent(channel, user_text: str) -> str:
                 }
             )
 
+        items.extend(outputs)
         response = await client.responses.create(
             model=MODEL,
-            input=outputs,
-            previous_response_id=response.id,
+            instructions=SYSTEM_PROMPT,
+            input=items,
             tools=schemas,
         )
 
-    conversations[channel_id] = response.id
+    items.append({"role": "assistant", "content": response.output_text})
+    del items[:-MAX_HISTORY_ITEMS]
+    # Never start the transcript on an orphaned tool call/output pair.
+    while items and items[0].get("type") in ("function_call", "function_call_output"):
+        items.pop(0)
     return response.output_text

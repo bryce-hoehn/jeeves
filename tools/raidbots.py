@@ -51,7 +51,7 @@ def _cache_dir() -> Path:
 
 
 def _http_get(url: str, timeout: int = 120) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "wow-mcp"})
+    request = urllib.request.Request(url, headers={"User-Agent": "jeeves"})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()

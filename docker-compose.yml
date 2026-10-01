@@ -5,8 +5,8 @@ services:
       # Pin a simc release tag instead of the development branch:
       # args:
       #   SIMC_REF: "11.2.0"
-    image: wow-mcp
-    container_name: wow-mcp
+    image: jeeves
+    container_name: jeeves
     restart: unless-stopped
     env_file: .env
     volumes:

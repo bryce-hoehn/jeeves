@@ -28,7 +28,7 @@ import discord
 from tools import tool
 
 MAX_DESCRIPTION = 3900  # Discord embed descriptions cap at 4096
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) wow-mcp"
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) jeeves"
 
 # WH.Types enum from tooltips.js — id -> URL segment used by the site.
 TYPES = {

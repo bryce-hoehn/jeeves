@@ -949,7 +949,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wow-mcp"
+name = "jeeves"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

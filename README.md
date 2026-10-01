@@ -1,4 +1,4 @@
-# wow-mcp
+# jeeves
 
 A Discord bot that chats with an AI. Tools are built-in Python functions in
 the `tools/` package plus any external MCP servers configured in
@@ -43,8 +43,8 @@ docker compose up -d --build
 Or plain Docker:
 
 ```sh
-docker build -t wow-mcp .
-docker run -d --name wow-mcp --env-file .env wow-mcp
+docker build -t jeeves .
+docker run -d --name jeeves --env-file .env jeeves
 ```
 
 Secrets come from the environment (`--env-file .env`, or `-e DISCORD_TOKEN=...`),

@@ -52,9 +52,16 @@ async def run_agent(channel, user_text: str) -> str:
         tools=schemas,
     )
 
-    # Run any tools the model asked for, then keep going until it replies with text.
+    # Run any tools the model asked for, then keep going until it replies with
+    # text and asks for no further tool calls (models often emit a short
+    # "Let me look that up:" message together with the tool call).
+    reply = ""
     for _ in range(10):
+        calls = [i for i in response.output if i.type == "function_call"]
         if response.output_text:
+            reply += response.output_text
+            items.append({"role": "assistant", "content": response.output_text})
+        if not calls:
             break
 
         outputs = []
@@ -100,9 +107,8 @@ async def run_agent(channel, user_text: str) -> str:
             tools=schemas,
         )
 
-    items.append({"role": "assistant", "content": response.output_text})
     del items[:-MAX_HISTORY_ITEMS]
     # Never start the transcript on an orphaned tool call/output pair.
     while items and items[0].get("type") in ("function_call", "function_call_output"):
         items.pop(0)
-    return response.output_text
+    return reply or response.output_text

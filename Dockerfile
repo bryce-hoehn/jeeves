@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Branch or tag to build — override with --build-arg SIMC_REF=11.2.0
 # to pin a release instead of tracking the development branch.
-ARG SIMC_REF=dragonflight
+ARG SIMC_REF=midnight
 RUN git clone --depth 1 --branch ${SIMC_REF} \
         https://github.com/simulationcraft/simc /tmp/simc \
     && make -C /tmp/simc/engine -j"$(nproc)" \

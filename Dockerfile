@@ -17,8 +17,7 @@ ARG SIMC_REF=dragonflight
 RUN git clone --depth 1 --branch ${SIMC_REF} \
         https://github.com/simulationcraft/simc /tmp/simc \
     && make -C /tmp/simc/engine -j"$(nproc)" \
-    && cp /tmp/simc/engine/simc /usr/local/bin/simc \
-    && /usr/local/bin/simc iterations=1 threads=1 >/dev/null
+    && cp /tmp/simc/engine/simc /usr/local/bin/simc
 
 # --- Stage 2: the bot --------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:0.12.21-python3.14-trixie-slim

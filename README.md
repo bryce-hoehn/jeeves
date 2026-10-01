@@ -16,8 +16,8 @@ OPENAI_API_KEY=...
 
 Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`, `SYSTEM_PROMPT`,
 `UNDERMINE_API_KEY`, `SIMC_PATH`, `RAIDBOTS_CACHE_DIR`,
-`BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET` (see the tool
-sections below). Then install dependencies:
+`BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET`, `EPHEMR_API_KEY`
+(see the tool sections below). Then install dependencies:
 
 ```sh
 uv sync
@@ -114,6 +114,18 @@ SIMC_PATH=/path/to/simc
 Sims are synchronous and can take minutes at high iteration counts; the tool
 returns the report's summary tables (DPS ranking / scale factors / tail),
 capped at ~4000 characters.
+
+Every simulation also generates simc's self-contained HTML report and
+publishes it to [ephemr.io](https://ephemr.io) (ephemeral static hosting), so
+the full interactive report is shared as a public link that expires after 72
+hours. Create an API key in the [ephemr portal](https://ephemr.io/portal/keys)
+and add it to `.env` to enable this:
+
+```
+EPHEMR_API_KEY=eph_live_...
+```
+
+Without a key, sims still run — the HTML report is just not hosted anywhere.
 
 ## Game knowledge
 

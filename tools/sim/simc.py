@@ -10,6 +10,11 @@ Typical input for `simc_simulate` is a /simc addon export: the multiline dump
 starting with `character="Name"` / `spec=` / `level=` lines. SimC is not
 bundled — install it (or build it on Linux) and set SIMC_PATH if it is not on
 PATH.
+
+Every simulation also writes simc's self-contained HTML report and, when
+EPHEMR_API_KEY is set, publishes it to https://ephemr.io (ephemeral static
+hosting, links expire after 72h) so the full interactive report can be shared
+as a link alongside the distilled text summary.
 """
 
 import json
@@ -19,12 +24,17 @@ import shutil
 import subprocess
 import tempfile
 import time
+import urllib.error
+import urllib.request
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from tools import tool
 
 MAX_OUTPUT_CHARS = 4000
+EPHEMR_API_URL = "https://ephemr.io/api/v1/pages"
+EPHEMR_MAX_HTML_BYTES = 10 * 1024 * 1024  # free-account upload cap
 
 FightStyle = Literal[
     "Patchwerk",
@@ -45,6 +55,58 @@ def _simc_binary() -> str:
             "https://github.com/simulationcraft/simc or set SIMC_PATH"
         )
     return path
+
+
+def _publish_ephemr(html_path: Path, title: str) -> str:
+    """Publish an HTML report to ephemr.io and return a URL/notice line.
+
+    Returns an empty string when publishing is skipped (no API key, no file,
+    oversized file) so callers can simply append the result.
+    """
+    key = os.getenv("EPHEMR_API_KEY")
+    if not key:
+        return ""
+    if not html_path.exists():
+        return ""
+    raw = html_path.read_bytes()
+    if len(raw) > EPHEMR_MAX_HTML_BYTES:
+        return "\n(html report too large for ephemr — skipped)"
+
+    boundary = uuid.uuid4().hex
+    parts = []
+    for name, value in (("html", raw.decode("utf-8", "replace")), ("title", title)):
+        parts.append(
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+            f"{value}\r\n"
+        )
+    body = ("".join(parts) + f"--{boundary}--\r\n").encode("utf-8")
+    request = urllib.request.Request(
+        EPHEMR_API_URL,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            page = json.loads(response.read().decode("utf-8"))
+        return (
+            f"\n\nFull HTML report (public link, expires in 72h): {page['url']}"
+        )
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:200]
+        return f"\n(ephemr publish failed: HTTP {exc.code} {detail})"
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return f"\n(ephemr publish failed: {exc})"
+
+
+def _profile_title(profile: str) -> str:
+    """Best-effort report title: the profile's character name, if any."""
+    match = re.search(r'^\s*character="([^"]+)"', profile, re.MULTILINE)
+    return f"simc report — {match.group(1)}" if match else "simc report"
 
 
 def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
@@ -185,15 +247,21 @@ def simc_simulate(
         if json_output:
             json_path = Path(tmp) / "report.json"
             options.append(f"output={json_path}")
+        html_path = Path(tmp) / "report.html"
+        options.append(f"html={html_path}")
 
         cmd = [_simc_binary(), str(profile_path), *options]
         started = time.monotonic()
         proc = _run(cmd, min(timeout, 3600))
+        link = _publish_ephemr(html_path, _profile_title(profile))
 
     if json_output and json_path and json_path.exists():
-        return _summarize_json(json_path, time.monotonic() - started)
+        return _summarize_json(json_path, time.monotonic() - started) + link
 
-    return _distill(proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started)
+    return (
+        _distill(proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started)
+        + link
+    )
 
 
 @tool
@@ -222,13 +290,18 @@ def simc_armory_simulate(
     if client_id and client_secret:
         options += [f"apikey={client_id}", f"apisecret={client_secret}"]
 
-    cmd = [_simc_binary(), *options]
-    started = time.monotonic()
-    proc = _run(cmd, min(timeout, 3600))
+    with tempfile.TemporaryDirectory(prefix="simc-") as tmp:
+        html_path = Path(tmp) / "report.html"
+        options.append(f"html={html_path}")
+
+        cmd = [_simc_binary(), *options]
+        started = time.monotonic()
+        proc = _run(cmd, min(timeout, 3600))
+        link = _publish_ephemr(html_path, f"simc report — {character.strip()}")
 
     result = _distill(
         proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started
-    )
+    ) + link
     if "Unable to authorize" in proc.stdout or "Unable to fetch bearer" in proc.stdout:
         if not (client_id and client_secret):
             result += (

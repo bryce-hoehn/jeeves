@@ -71,3 +71,6 @@ async def on_message(message: discord.Message):
     # Discord caps messages at 2000 characters.
     for i in range(0, len(reply), 2000):
         await target.send(reply[i : i + 2000])
+
+if __name__ = "__main__":
+    bot.run(os.environ["DISCORD_TOKEN"])

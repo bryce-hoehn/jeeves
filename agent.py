@@ -31,6 +31,19 @@ if "wowhead_tooltip" in TOOLS:
         " wowhead_tooltip tool — it posts a Wowhead tooltip embed into the"
         " channel instead of pasting raw stats."
     )
+if "game_knowledge" in TOOLS:
+    SYSTEM_PROMPT += (
+        " Before giving any WoW gold-making, market, realm, faction, or"
+        " trading advice, call the game_knowledge tool first — your training"
+        " data is outdated on current (Midnight) mechanics, e.g. warbands"
+        " make cross-realm flipping free with no realm/faction transfer."
+    )
+if "python" in TOOLS:
+    SYSTEM_PROMPT += (
+        " Use the python tool for ALL arithmetic and statistics — never do"
+        " multi-digit math, currency conversions, or error-bar comparisons in"
+        " your head."
+    )
 
 # thread/DM channel id -> transcript items, so each conversation keeps context
 conversations: dict[int, list] = {}

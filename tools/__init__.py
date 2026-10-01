@@ -1,5 +1,12 @@
-"""Built-in tools. Each module in this package defines one tool; the @tool
-decorator registers it in TOOLS so the agent can offer it to the model."""
+"""Built-in tools, grouped into subpackages by domain. Each module defines
+one tool (or shared helpers); the @tool decorator registers it in TOOLS so
+the agent can offer it to the model.
+
+- core/      — sandboxed python execution, clock, game-mechanics knowledge
+- market/    — Undermine Exchange, Blizzard API (realms, token price)
+- sim/       — SimulationCraft CLI, Raidbots static data
+- reference/ — Wowhead tooltip embeds
+"""
 
 import inspect
 from typing import get_type_hints
@@ -42,9 +49,7 @@ def tool(fn):
 
 
 # Importing these modules registers their tools.
-from tools import (  # noqa: E402, F401
-    raidbots,
-    simc,
-    undermine,
-    wowhead,
-)
+from tools.core import clock, game, python  # noqa: E402, F401
+from tools.market import realms, token, undermine  # noqa: E402, F401
+from tools.reference import wowhead  # noqa: E402, F401
+from tools.sim import raidbots, simc  # noqa: E402, F401

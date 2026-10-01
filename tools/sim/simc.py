@@ -12,6 +12,7 @@ bundled — install it (or build it on Linux) and set SIMC_PATH if it is not on
 PATH.
 """
 
+import json
 import os
 import re
 import shutil
@@ -56,6 +57,33 @@ def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
         raise RuntimeError(f"simc timed out after {timeout}s") from None
     except FileNotFoundError:
         raise RuntimeError(f"could not execute {_simc_binary()}") from None
+
+
+def _summarize_json(path: Path, elapsed: float) -> str:
+    """Turn simc's JSON report into a compact mean/SE table per profileset."""
+    report = json.loads(path.read_text(encoding="utf-8"))
+    lines = [f"simc json report, finished in {elapsed:.1f}s"]
+    sim = report.get("sim", {})
+    for player in sim.get("players", []):
+        name = player.get("name", "?")
+        collected = player.get("collected_data", {})
+        dps = collected.get("dps", {})
+        mean = dps.get("mean")
+        if mean is None:
+            continue
+        se = dps.get("mean_std_err", dps.get("error", 0)) or 0
+        line = f"  {name}: {mean:.0f} dps (SE {se:.0f}, min {dps.get('min', 0):.0f}, max {dps.get('max', 0):.0f})"
+        # Scale factors, when calculated, come as lists per stat.
+        weights = collected.get("scale_factors", {}) or {}
+        if weights:
+            line += " | weights: " + ", ".join(
+                f"{k}={v:.2f}" for k, v in weights.items() if isinstance(v, (int, float))
+            )
+        lines.append(line)
+    if len(lines) == 1:  # no players parsed
+        lines.append("(no player results found in json report)")
+    text = "\n".join(lines)
+    return text[:MAX_OUTPUT_CHARS]
 
 
 def _distill(stdout: str, stderr: str, returncode: int, elapsed: float) -> str:
@@ -137,10 +165,11 @@ def simc_simulate(
     iterations: int = 10000,
     threads: int = 0,
     scale_factors: bool = False,
+    json_output: bool = False,
     extra_options: list[str] | None = None,
     timeout: int = 900,
 ) -> str:
-    """Run a SimulationCraft simulation on a character profile and return the DPS results. `profile` is the full text of a /simc addon export (starts with lines like `character="Name"`, `level=`, `spec=`) or any simc profile; it may contain multiple characters or `profileset.` blocks to compare gear/talent variants. iterations=0 lets simc choose a smart sample size; higher = slower but more accurate. Set scale_factors=true for stat weights (much slower). Use extra_options for raw simc options, e.g. ["max_time=400", "ptr=1"]."""
+    """Run a SimulationCraft simulation on a character profile and return the DPS results. `profile` is the full text of a /simc addon export (starts with lines like `character="Name"`, `level=`, `spec=`) or any simc profile; it may contain multiple characters or `profileset.` blocks to compare gear/talent variants. iterations=0 lets simc choose a smart sample size; higher = slower but more accurate. Set scale_factors=true for stat weights (much slower). Set json_output=true for structured results with mean AND standard error per profile (recommended when comparing variants — feed the means/SEs into the python tool for significance testing: z = delta / sqrt(SE_a^2 + SE_b^2)). Use extra_options for raw simc options, e.g. ["max_time=400", "ptr=1"]."""
     with tempfile.TemporaryDirectory(prefix="simc-") as tmp:
         profile_path = Path(tmp) / "profile.simc"
         profile_path.write_text(profile, encoding="utf-8")
@@ -152,9 +181,17 @@ def simc_simulate(
         if re.search(r"^\s*profileset\.", profile, re.MULTILINE):
             options.append("profileset_report_details=0")
 
+        json_path: Path | None = None
+        if json_output:
+            json_path = Path(tmp) / "report.json"
+            options.append(f"output={json_path}")
+
         cmd = [_simc_binary(), str(profile_path), *options]
         started = time.monotonic()
         proc = _run(cmd, min(timeout, 3600))
+
+    if json_output and json_path and json_path.exists():
+        return _summarize_json(json_path, time.monotonic() - started)
 
     return _distill(proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started)
 
@@ -171,14 +208,33 @@ def simc_armory_simulate(
     extra_options: list[str] | None = None,
     timeout: int = 900,
 ) -> str:
-    """Run a SimulationCraft simulation on a character imported from the Blizzard armory, e.g. region "us", realm "stormrage", character "Coffee". Requires the simc build to have Blizzard API access (official releases do). Prefer simc_simulate with a /simc addon export when available — it is more reliable than armory import."""
+    """Run a SimulationCraft simulation on a character imported from the Blizzard armory, e.g. region "us", realm "stormrage", character "Coffee". Uses BLIZZARD_CLIENT_ID/SECRET to authorize with the Blizzard API (the same free develop.battle.net credentials the realm tools use); without them simc falls back to its built-in key, which may fail with "Unable to fetch bearer". Prefer simc_simulate with a /simc addon export when available — it is more reliable than armory import."""
     options = _common_options(
         fight_style, iterations, threads, scale_factors, extra_options
     )
     options.append(f"armory={region},{realm.strip()},{character.strip()}")
 
+    # Armory downloads need Blizzard API credentials — simc's built-in shared
+    # key stopped working ("Unable to authorize: Unable to fetch bearer"), so
+    # pass our own develop.battle.net client through simc's apikey/apisecret.
+    client_id = os.getenv("BLIZZARD_CLIENT_ID")
+    client_secret = os.getenv("BLIZZARD_CLIENT_SECRET")
+    if client_id and client_secret:
+        options += [f"apikey={client_id}", f"apisecret={client_secret}"]
+
     cmd = [_simc_binary(), *options]
     started = time.monotonic()
     proc = _run(cmd, min(timeout, 3600))
 
-    return _distill(proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started)
+    result = _distill(
+        proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started
+    )
+    if "Unable to authorize" in proc.stdout or "Unable to fetch bearer" in proc.stdout:
+        if not (client_id and client_secret):
+            result += (
+                "\n\nArmory authorization failed. Set BLIZZARD_CLIENT_ID and "
+                "BLIZZARD_CLIENT_SECRET (free at https://develop.battle.net) "
+                "so this tool can pass them to simc, or use simc_simulate "
+                "with a /simc addon export instead."
+            )
+    return result

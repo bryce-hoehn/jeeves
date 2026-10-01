@@ -22,6 +22,7 @@ import urllib.request
 from typing import Literal
 
 from tools import tool
+from tools.market.util import gold as _gold
 
 BASE_URL = "https://api.undermine.exchange"
 
@@ -59,13 +60,6 @@ def _get(path: str, cache_seconds: int = 0):
     if cache_seconds:
         _list_cache[path] = (time.monotonic() + cache_seconds, result)
     return result
-
-
-def _gold(copper: int) -> str:
-    """Format an amount of copper as gold/silver/copper."""
-    gold, rest = divmod(int(copper), 10000)
-    silver, cop = divmod(rest, 100)
-    return f"{gold:,}g {silver:02d}s {cop:02d}c"
 
 
 def _clamp(value: int, low: int, high: int) -> int:

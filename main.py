@@ -18,6 +18,9 @@ async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
 
 
+MAX_ATTACHMENT_BYTES = 200_000
+
+
 def _strip_mention(text: str) -> str:
     return (
         text.replace(f"<@{bot.user.id}>", "")
@@ -26,12 +29,29 @@ def _strip_mention(text: str) -> str:
     )
 
 
+async def _attachment_text(message: discord.Message) -> str:
+    """Fetch text-file attachments (e.g. simbot output past Discord's limit)."""
+    parts = []
+    for att in message.attachments:
+        is_text = att.filename.endswith((".txt", ".json", ".csv", ".lua", ".md")) or (
+            att.content_type or "").startswith("text/")
+        if not is_text:
+            continue
+        if att.size > MAX_ATTACHMENT_BYTES:
+            parts.append(f"[skipped {att.filename}: too large]")
+            continue
+        data = await att.read()
+        parts.append(f"--- {att.filename} ---\n{data.decode('utf-8', errors='replace')}")
+    return "\n".join(parts)
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
     channel = message.channel
+    attachments = await _attachment_text(message)
 
     # A message inside one of the bot's threads continues that thread's
     # conversation. Threads the bot didn't create are left alone.
@@ -39,6 +59,8 @@ async def on_message(message: discord.Message):
         if channel.owner_id != bot.user.id:
             return
         text = _strip_mention(message.content)
+        if attachments:
+            text = f"{text}\n{attachments}".strip()
         if text == "!reset":
             agent.conversations.pop(channel.id, None)
             await message.reply("Conversation reset.")
@@ -53,6 +75,8 @@ async def on_message(message: discord.Message):
         if message.guild and not bot.user.mentioned_in(message):
             return
         text = _strip_mention(message.content)
+        if attachments:
+            text = f"{text}\n{attachments}".strip()
         if not text:
             return
         if message.guild:

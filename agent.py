@@ -64,6 +64,9 @@ if "wowhead_tooltip" in TOOLS:
 # thread/DM channel id -> transcript items, so each conversation keeps context
 conversations: dict[int, list] = {}
 MAX_HISTORY_ITEMS = 60
+# Max tool-call rounds per turn. Generous — each round can batch several calls,
+# and exhausting it just forces a text-only wrap-up rather than an error.
+MAX_TOOL_ROUNDS = 40
 
 
 async def run_agent(channel, user_text: str) -> str:
@@ -82,15 +85,16 @@ async def run_agent(channel, user_text: str) -> str:
     )
 
     # Run any tools the model asked for, then keep going until it replies with
-    # text and asks for no further tool calls (models often emit a short
-    # "Let me look that up:" message together with the tool call).
+    # text and asks for no further tool calls. Models often narrate their
+    # reasoning ("Let me check X...") alongside tool calls — that chatter is
+    # transcript context only, NEVER part of the reply we post back.
     reply = ""
-    for _ in range(10):
+    for _ in range(MAX_TOOL_ROUNDS):
         calls = [i for i in response.output if i.type == "function_call"]
         if response.output_text:
-            reply += response.output_text
             items.append({"role": "assistant", "content": response.output_text})
         if not calls:
+            reply = response.output_text
             break
 
         outputs = []
@@ -135,9 +139,21 @@ async def run_agent(channel, user_text: str) -> str:
             input=items,
             tools=schemas,
         )
+    else:
+        # Tool budget exhausted while the model was still calling tools.
+        # Force a text-only wrap-up so the user gets an answer built from
+        # whatever was gathered, instead of the intermediate narration.
+        response = await client.responses.create(
+            model=MODEL,
+            instructions=SYSTEM_PROMPT,
+            input=items,
+            tools=schemas,
+            tool_choice="none",
+        )
+        reply = response.output_text
 
     del items[:-MAX_HISTORY_ITEMS]
     # Never start the transcript on an orphaned tool call/output pair.
     while items and items[0].get("type") in ("function_call", "function_call_output"):
         items.pop(0)
-    return reply or response.output_text
+    return reply

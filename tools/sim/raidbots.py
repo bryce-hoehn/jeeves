@@ -15,13 +15,10 @@ needed.
 
 import json
 import os
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Literal
 
-from tools import tool
+from tools import tool, web
 
 DATA_URL = "https://www.raidbots.com/static/data"
 MAX_OUTPUT_CHARS = 4000
@@ -50,27 +47,16 @@ def _cache_dir() -> Path:
     return path
 
 
-def _http_get(url: str, timeout: int = 120) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "jeeves"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.read()
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"HTTP {exc.code} for {url}") from None
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"could not reach {url}: {exc.reason}") from None
-
-
-_metadata_cache: dict[str, tuple[float, dict]] = {}
+_metadata_cache = web.TTLCache(ttl=METADATA_TTL)
 
 
 def _metadata(env: str) -> dict:
     """Fetch (and briefly cache) metadata.json for an environment."""
-    hit = _metadata_cache.get(env)
-    if hit and hit[0] > time.monotonic():
-        return hit[1]
-    data = json.loads(_http_get(f"{DATA_URL}/{env}/metadata.json"))
-    _metadata_cache[env] = (time.monotonic() + METADATA_TTL, data)
+    cached = _metadata_cache.get(env)
+    if cached is not None:
+        return cached
+    data = web.get_json(f"{DATA_URL}/{env}/metadata.json")
+    _metadata_cache.put(env, data)
     return data
 
 
@@ -92,7 +78,7 @@ def _load(name: str, env: str, keep: bool = True):
     if path.exists() and marker.read_text() == content_hash:
         data = json.loads(path.read_text(encoding="utf-8"))
     else:
-        raw = _http_get(f"{DATA_URL}/{env}/{name}.json", timeout=600)
+        raw = web.fetch_bytes(f"{DATA_URL}/{env}/{name}.json", timeout=600)
         path.write_bytes(raw)
         marker.write_text(content_hash)
         data = json.loads(raw)
@@ -246,6 +232,13 @@ def raidbots_consumables(
     query: str = "", kind: Literal["flasks", "foods", "potions", "temp-enchants", "augments"] = "", env: Env = "live"
 ) -> str:
     """Search raid consumables (flasks, foods, potions, weapon buffs, augments) with their simc option strings — pass several at once for a simc profile. kind picks one category; query filters by (partial) name; empty query + empty kind lists a sample from each category."""
+    if kind and kind not in CONSUMABLE_KINDS:
+        if f"{kind}s" in CONSUMABLE_KINDS:
+            kind = f"{kind}s"
+        else:
+            return (
+                f"Unknown kind '{kind}'. Available: {', '.join(CONSUMABLE_KINDS)}"
+            )
     kinds = [kind] if kind else list(CONSUMABLE_KINDS)
     limit = 8 if not kind and not query else 15
 
@@ -324,7 +317,14 @@ def raidbots_get_file(name: str, env: Env = "live") -> str:
     }:
         return f"{name} is too large to dump; use raidbots_item_search for items."
 
-    text = json.dumps(_load(name.removesuffix(".json"), env), indent=None)
+    try:
+        text = json.dumps(_load(name.removesuffix(".json"), env), indent=None)
+    except RuntimeError as exc:
+        return (
+            f"Could not fetch '{name}' ({exc}). The metadata list can "
+            "occasionally name files that are missing on the server — "
+            "use raidbots_metadata to check the current list."
+        )
     if len(text) > MAX_OUTPUT_CHARS:
         return text[:MAX_OUTPUT_CHARS] + " ... (truncated)"
     return text

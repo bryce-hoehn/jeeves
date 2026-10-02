@@ -1,6 +1,8 @@
 .env
 mcp.json
+cron.json
 data/
+knowledge/
 .venv
 __pycache__
 .DS_Store

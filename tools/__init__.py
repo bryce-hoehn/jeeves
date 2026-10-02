@@ -2,10 +2,20 @@
 one tool (or shared helpers); the @tool decorator registers it in TOOLS so
 the agent can offer it to the model.
 
-- core/      — sandboxed python execution, clock, game-mechanics knowledge
-- market/    — Undermine Exchange, Blizzard API (realms, token price)
-- sim/       — SimulationCraft CLI, Raidbots static data
-- reference/ — Wowhead tooltip embeds
+- core/        — sandboxed python execution, clock, persistent markdown
+                  knowledge base
+- market/      — Undermine Exchange, Blizzard API (realms, token, auctions)
+- progression/ — character/guild progression: Blizzard profile, Raider.IO,
+                 Warcraft Logs
+- sim/         — SimulationCraft CLI, Raidbots static data
+- reference/   — Wowhead tooltips/pages, Icy Veins & wow.gg guides, WoW wiki,
+                  news & hotfix feeds, darmory event calendar
+- discord_events.py — this Discord server's scheduled-event calendar
+
+Shared plumbing (registered as tools themselves? no): tools/web.py is the
+single HTTP layer — browser-UA session with retries, page cache,
+client-credentials OAuth, and HTML→text utilities — and tools/util.py holds
+slug/clamp helpers.
 """
 
 import inspect
@@ -49,7 +59,16 @@ def tool(fn):
 
 
 # Importing these modules registers their tools.
-from tools.core import clock, game, python  # noqa: E402, F401
-from tools.market import realms, token, undermine  # noqa: E402, F401
-from tools.reference import wowhead  # noqa: E402, F401
+from tools import discord_events  # noqa: E402, F401
+from tools.core import clock, knowledge, python  # noqa: E402, F401
+from tools.market import auctions, realms, token, undermine  # noqa: E402, F401
+from tools.progression import blizzard, raiderio, warcraftlogs  # noqa: E402, F401
+from tools.reference import (  # noqa: E402, F401
+    blizznews,
+    darmory,
+    icyveins,
+    wowgg,
+    wowhead,
+    wowwiki,
+)
 from tools.sim import raidbots, simc  # noqa: E402, F401

@@ -13,57 +13,37 @@ gold/silver/copper string. Requires an UNDERMINE_API_KEY env var (get one at
 https://undermine.exchange/api.html#gaining-access).
 """
 
-import json
 import os
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Literal
 
-from tools import tool
-from tools.market.util import gold as _gold
+from tools import tool, web
+from tools.util import clamp, gold as _gold, realm_slug
 
 BASE_URL = "https://api.undermine.exchange"
 
 # Big list endpoints cost 3 rate-limit tokens each (budget: 3000/hour) and
 # rarely change minute to minute, so cache them in-process for 5 minutes.
-LIST_CACHE_SECONDS = 300
-
-_list_cache: dict[str, tuple[float, object]] = {}
+_list_cache = web.TTLCache(ttl=300)
 
 
 def _get(path: str, cache_seconds: int = 0):
     """GET an API endpoint and return its parsed `result` payload."""
     if cache_seconds:
-        hit = _list_cache.get(path)
-        if hit and hit[0] > time.monotonic():
-            return hit[1]
+        cached = _list_cache.get(path)
+        if cached is not None:
+            return cached
 
     api_key = os.getenv("UNDERMINE_API_KEY")
     if not api_key:
         raise RuntimeError("UNDERMINE_API_KEY is not set")
 
-    request = urllib.request.Request(
+    payload = web.request_json(
         f"{BASE_URL}{path}", headers={"Authorization": f"ApiKey {api_key}"}
     )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode(errors="replace")[:200]
-        raise RuntimeError(f"API error {exc.code} for {path}: {detail}") from None
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"could not reach {path}: {exc.reason}") from None
-
     result = payload.get("result", payload)
     if cache_seconds:
-        _list_cache[path] = (time.monotonic() + cache_seconds, result)
+        _list_cache.put(path, result)
     return result
-
-
-def _clamp(value: int, low: int, high: int) -> int:
-    return max(low, min(value, high))
 
 
 # Region-wide commodities ------------------------------------------------------
@@ -100,7 +80,7 @@ def commodity_price_history(
     if not daily:
         return f"No price history for commodity {item_id} in {region.upper()}."
 
-    days = _clamp(days, 1, 30)
+    days = clamp(days, 1, 30)
     rows = daily[-days:]
     avg = sum(r["price"] for r in rows) / len(rows)
     lines = [
@@ -125,7 +105,7 @@ def commodity_hourly_history(
     if not hourly:
         return f"No hourly history for commodity {item_id} in {region.upper()}."
 
-    snapshots = _clamp(snapshots, 1, 96)
+    snapshots = clamp(snapshots, 1, 96)
     rows = hourly[-snapshots:]
     lines = [
         f"Commodity {item_id} ({region.upper()}) — last {len(rows)} hourly snapshots:",
@@ -144,9 +124,7 @@ def commodity_hourly_history(
 @tool
 def item_summary(item_id: int, region: Literal["us", "eu"] = "us") -> str:
     """Region-wide summary for a non-commodity (per-realm) item: median and minimum price across all realms currently selling it, and how many realms that is. Returns 'not on sale' if nobody is selling it."""
-    data = _get(
-        f"/v1/region/{region}/items.json", cache_seconds=LIST_CACHE_SECONDS
-    )
+    data = _get(f"/v1/region/{region}/items.json", cache_seconds=300)
     entry = (data or {}).get("items", {}).get(str(item_id))
     if not entry:
         return (
@@ -169,7 +147,7 @@ def item_realm_prices(
     if not data:
         return f"Item {item_id} is not on sale on any realm in {region.upper()}."
 
-    limit = _clamp(limit, 1, 25)
+    limit = clamp(limit, 1, 25)
     groups = sorted(data, key=lambda g: g["price"])[:limit]
     total_realms = len(data)
     lines = [
@@ -195,7 +173,7 @@ def item_price_history(
     if not daily:
         return f"No price history for item {item_id} in {region.upper()}."
 
-    days = _clamp(days, 1, 30)
+    days = clamp(days, 1, 30)
     rows = daily[-days:]
     avg = sum(r["price"] for r in rows) / len(rows)
     lines = [
@@ -214,7 +192,8 @@ def item_price_history(
 
 
 def _realm_slug(realm: str) -> str:
-    return urllib.parse.quote(realm.strip().lower().replace(" ", "-"))
+    """Blizzard-style realm slug ("Kel'Thuzad" -> "kelthuzad")."""
+    return realm_slug(realm)
 
 
 @tool
@@ -257,7 +236,7 @@ def realm_item_history(
     if not daily:
         return f"No history for item {item_id} on {realm} ({region.upper()})."
 
-    days = _clamp(days, 1, 60)
+    days = clamp(days, 1, 60)
     rows = daily[-days:]
     lines = [
         f"Item {item_id} on {realm} ({region.upper()}) — last {len(rows)} days:",

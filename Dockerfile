@@ -39,7 +39,7 @@ ENV UV_LINK_MODE=copy
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
-COPY agent.py main.py mcp_servers.py ./
+COPY agent.py cron.py main.py mcp_servers.py ./
 COPY tools/ tools/
 
 CMD ["uv", "run", "--no-sync", "main.py"]

@@ -12,23 +12,22 @@ tooltips.js):
    returns {name, quality, icon, tooltip(html)}.
 
 The tool converts the tooltip HTML to text and posts a rich Discord embed
-(icon thumbnail, quality-colored name, link back to Wowhead).
+(icon thumbnail, quality-colored name, link back to Wowhead). Page scraping
+for guides/news lives in wowhead_page below.
 """
 
 import html as html_lib
 import json
 import re
-import time
 import urllib.parse
-import urllib.request
 from typing import Literal
 
 import discord
 
-from tools import tool
+from tools import tool, web
+from tools.util import clamp
 
 MAX_DESCRIPTION = 3900  # Discord embed descriptions cap at 4096
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) jeeves"
 
 # WH.Types enum from tooltips.js — id -> URL segment used by the site.
 TYPES = {
@@ -44,21 +43,7 @@ TEMPLATE_TO_TYPE = {
 QUALITY_COLORS = [0x9D9D9D, 0xFFFFFF, 0x1EFF00, 0x0070DD, 0xA335EE, 0xFF8000, 0xE5CC80]
 DEFAULT_COLOR = 0xFFD100  # Wowhead gold
 
-_search_cache: dict[str, tuple[float, tuple[int, str, str]]] = {}
-_SEARCH_TTL = 600
-
-
-def _http_get(url: str, retries: int = 2) -> bytes:
-    last_error = None
-    for _ in range(retries + 1):
-        try:
-            request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.read()
-        except (ConnectionError, TimeoutError) as exc:  # throttling / hiccup
-            last_error = exc
-            time.sleep(2)
-    raise RuntimeError(f"could not fetch {url}: {last_error}")
+_search_cache = web.TTLCache(ttl=600)
 
 
 def _extract_object(text: str, start: int) -> tuple[dict, int]:
@@ -87,11 +72,11 @@ def _extract_object(text: str, start: int) -> tuple[dict, int]:
 def _resolve(query: str, kind: str) -> tuple[int, str, str]:
     """Resolve a search query to (typeId, id, name) of the top result."""
     cached = _search_cache.get(query.lower())
-    if cached and cached[0] > time.monotonic():
-        return cached[1]
+    if cached is not None:
+        return cached
 
     url = f"https://www.wowhead.com/search?q={urllib.parse.quote(query)}"
-    page = _http_get(url).decode("utf-8", errors="replace")
+    page = web.fetch(url)
 
     # Gathered result data, per WH type id: {id: {name_enus: ...}}.
     groups: dict[int, dict] = {}
@@ -118,7 +103,7 @@ def _resolve(query: str, kind: str) -> tuple[int, str, str]:
             hit = find(groups.get(type_id) or {}, matches)
             if hit:
                 result = (type_id, hit[0], hit[1].get("name_enus") or query)
-                _search_cache[query.lower()] = (time.monotonic() + _SEARCH_TTL, result)
+                _search_cache.put(query.lower(), result)
                 return result
 
     # No name match anywhere — take the first entry of the first result tab.
@@ -128,7 +113,7 @@ def _resolve(query: str, kind: str) -> tuple[int, str, str]:
         if type_id and groups.get(type_id):
             item_id, entry = next(iter(groups[type_id].items()))
             result = (type_id, str(item_id), entry.get("name_enus") or query)
-            _search_cache[query.lower()] = (time.monotonic() + _SEARCH_TTL, result)
+            _search_cache.put(query.lower(), result)
             return result
 
     raise RuntimeError(f"no Wowhead results for '{query}'")
@@ -150,7 +135,7 @@ def _tooltip_to_text(tooltip_html: str) -> str:
 def _fetch_tooltip(type_id: int, item_id: str) -> dict:
     slug = TYPES[type_id]
     url = f"https://nether.wowhead.com/tooltip/{slug}/{item_id}?locale=0"
-    return json.loads(_http_get(url))
+    return web.get_json(url)
 
 
 @tool
@@ -188,3 +173,20 @@ async def wowhead_tooltip(
 
     await channel.send(embed=embed)
     return f"Posted Wowhead tooltip embed: {name} ({TYPES[type_id]} {item_id}) — {url}"
+
+
+@tool
+def wowhead_page(query_or_url: str, max_chars: int = 6000) -> str:
+    """Scrape the readable text of a Wowhead page — guides, news articles, or item/spell/NPC/quest pages — for when the user wants details beyond a tooltip (guide steps, drop sources, related-patch notes, article body). Pass a full www.wowhead.com URL, or a name like "frostweave cloth" to resolve to its Wowhead page. Returns the page title, URL, and main text. For showing a specific item/spell in chat, prefer wowhead_tooltip instead."""
+    max_chars = clamp(max_chars, 500, 12000)
+    if query_or_url.startswith("http"):
+        netloc = urllib.parse.urlparse(query_or_url).netloc
+        if not netloc.endswith("wowhead.com"):
+            raise RuntimeError(f"not a Wowhead URL: {query_or_url}")
+        url = query_or_url.split("#", 1)[0]
+    else:
+        type_id, item_id, _ = _resolve(query_or_url, "")
+        url = f"https://www.wowhead.com/{TYPES[type_id]}={item_id}"
+
+    title, text, _ = web.text_from_html(web.fetch(url))
+    return f"{title or url}\n{url}\n\n{text[:max_chars]}"

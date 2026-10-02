@@ -1,11 +1,17 @@
+import logging
 import os
 
 import discord
 from dotenv import load_dotenv
 
 import agent
+import cron
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
+)
 
 intents = discord.Intents.default()
 intents.message_content = True  # also enable this in the Discord Developer Portal
@@ -16,6 +22,7 @@ bot = discord.Bot(intents=intents)
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user.name} ({bot.user.id})")
+    bot.loop.create_task(cron.scheduler(bot))
 
 
 MAX_ATTACHMENT_BYTES = 200_000

@@ -11,20 +11,19 @@ import os
 import time
 from typing import Literal
 
-from tools import tool
+from tools import tool, web
 from tools.market.blizzard import auth_headers, http_json
-from tools.market.util import gold as _gold
+from tools.util import gold as _gold
 
-CACHE_SECONDS = 3600
-_cache: dict[str, tuple[float, str]] = {}
+_cache = web.TTLCache(ttl=3600)
 
 
 @tool
 def wow_token_price(region: Literal["us", "eu", "tw", "kr"] = "us") -> str:
     """Current WoW Token gold price for a region (how much gold one token sells for on the auction house). Use this to convert gold profit into real-money terms — e.g. to compare a flip's profit against the cost of a realm/faction transfer, or to price out 'just buying the gold'. Price is cached up to 1 hour."""
     hit = _cache.get(region)
-    if hit and hit[0] > time.monotonic():
-        return hit[1]
+    if hit is not None:
+        return hit
 
     url = (
         f"https://{region}.api.blizzard.com/data/wow/token/index"
@@ -36,9 +35,13 @@ def wow_token_price(region: Literal["us", "eu", "tw", "kr"] = "us") -> str:
     try:
         data = http_json(url, headers)
         price = int(data["price"])
-        updated = time.strftime(
-            "%Y-%m-%d %H:%M UTC",
-            time.gmtime(data["last_modified_timestamp"] / 1000),
+        updated_ts = data.get("last_updated_timestamp") or data.get(
+            "last_modified_timestamp"
+        )
+        updated = (
+            time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(updated_ts / 1000))
+            if updated_ts
+            else "unknown"
         )
         text = (
             f"WoW Token ({region.upper()}): {_gold(price)} per token\n"
@@ -56,5 +59,5 @@ def wow_token_price(region: Literal["us", "eu", "tw", "kr"] = "us") -> str:
             "(via wowtokenprices.com)"
         )
 
-    _cache[region] = (time.monotonic() + CACHE_SECONDS, text)
+    _cache.put(region, text)
     return text

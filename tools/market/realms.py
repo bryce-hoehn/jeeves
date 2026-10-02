@@ -18,6 +18,7 @@ from typing import Literal
 
 from tools import tool
 from tools.market.blizzard import auth_headers, http_json
+from tools.util import realm_slug
 
 CACHE_FILE_TTL_DAYS = 7
 
@@ -31,9 +32,6 @@ def _load_realms(region: str) -> dict:
     if not fresh:
         api = f"https://{region}.api.blizzard.com/data/wow"
         auth = auth_headers(region)
-        realm_index = http_json(
-            f"{api}/realm/index?namespace=dynamic-{region}", auth
-        )
 
         cr_index = http_json(
             f"{api}/connected-realm/index?namespace=dynamic-{region}", auth
@@ -65,21 +63,21 @@ def realm_metadata(
 ) -> str:
     """Look up a realm's connected-realm group — the set of realms that share one auction house — plus its timezone and population tag. With no `realm`, returns a compact summary of the largest groups. Use this before cross-realm price comparisons: connected realms price identically, so buy/sell lanes only exist BETWEEN groups. Data cached weekly."""
     groups = _load_realms(region)["groups"]
-    realm_slug = realm.lower().replace(" ", "-") if realm else None
+    wanted = realm_slug(realm) if realm else None
 
-    if realm_slug:
+    if wanted:
         for g in groups:
-            if realm_slug in g["realms"]:
+            if wanted in g["realms"]:
                 members = ", ".join(
-                    f"{r['name']} ({slug})" for slug, r in sorted(g["realms"].items())
+                    f"{r['name']} ({s})" for s, r in sorted(g["realms"].items())
                 )
                 return (
-                    f"{realm_slug} is in connected-realm group {g['id']} "
+                    f"{wanted} is in connected-realm group {g['id']} "
                     f"(population: {g['population'] or 'unknown'}).\n"
                     f"Shared auction house with: {members}"
                 )
         raise RuntimeError(
-            f"realm '{realm_slug}' not found in region {region} — "
+            f"realm '{wanted}' not found in region {region} — "
             "check the slug, e.g. 'area-52', 'moon-guard'"
         )
 

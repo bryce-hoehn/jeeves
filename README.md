@@ -16,7 +16,10 @@ OPENAI_API_KEY=...
 
 Optional: `OPENAI_BASE_URL`, `OPENAI_MODEL`, `SYSTEM_PROMPT`,
 `UNDERMINE_API_KEY`, `SIMC_PATH`, `RAIDBOTS_CACHE_DIR`,
-`BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET`, `EPHEMR_API_KEY`
+`BLIZZARD_CLIENT_ID`/`BLIZZARD_CLIENT_SECRET` (auction house + character/guild
+progression tools), `WCL_CLIENT_ID`/`WCL_CLIENT_SECRET` (Warcraft Logs),
+`RAIDERIO_API_KEY` (optional, higher rate limits), `EPHEMR_API_KEY`,
+`KNOWLEDGE_DIR` (knowledge-base folder, default `knowledge/`)
 (see the tool sections below). Then install dependencies:
 
 ```sh
@@ -127,16 +130,6 @@ EPHEMR_API_KEY=eph_live_...
 
 Without a key, sims still run — the HTML report is just not hosted anywhere.
 
-## Game knowledge
-
-[`tools/core/game.py`](tools/core/game.py) — the `game_knowledge` tool returns a
-ground-truth reference of current (Midnight, 12.x) mechanics: warbands and
-the account-wide warband bank (cross-realm flipping is free — no realm or
-faction transfers needed), per-realm vs. region-wide auction houses, AH
-fees, and gearing context. The system prompt tells the agent to consult it
-before any gold-making/realm/faction advice, since model training data is
-stale on retail mechanics.
-
 ## Core tools: python, clock
 
 [`tools/core/python.py`](tools/core/python.py) — the `python` tool runs generated code in
@@ -149,6 +142,27 @@ of in mental math.
 [`tools/core/clock.py`](tools/core/clock.py) — the `now` tool reports the current UTC
 time, epoch, and the next US/EU weekly reset, for interpreting API timestamps
 ("3-hour-old snapshot") and reset/restock cycles.
+
+## Knowledge base tools
+
+[`tools/core/knowledge.py`](tools/core/knowledge.py) — a persistent markdown
+knowledge base the agent reads and writes across conversations. Notes live as
+plain `.md` files in `knowledge/` (override with `KNOWLEDGE_DIR`; mount it as
+a volume in Docker so notes survive container restarts):
+
+- `kb_list()` — every note with its title, size, and last-modified time
+- `kb_read(name)` — full contents of one note (truncated past 16k chars)
+- `kb_write(name, content)` — create or overwrite a note (256 KB cap)
+- `kb_append(name, content)` — append to a note (running logs, price diaries)
+- `kb_search(query)` — case-insensitive search across all notes
+
+The base ships with `knowledge/game-mechanics.md` — the ground-truth
+reference for current (Midnight, 12.x) mechanics (warbands, the account-wide
+warband bank, per-realm vs. region-wide auction houses, AH fees) that used
+to be a hardcoded `game_knowledge` tool. Typical uses for new notes: user
+preferences ("bryce plays Alliance on Kel'Thuzad"), market watchlists,
+summaries of guides the agent has scraped, and conclusions worth recalling
+in later conversations.
 
 ## Market tools: token price, realms
 
@@ -203,12 +217,63 @@ system prompt says so automatically when the tool is registered. The agent
 injects the Discord channel into any tool with a `channel` parameter, and
 the dispatch awaits async tool functions.
 
+## In-game events calendar
+
+[`tools/reference/darmory.py`](tools/reference/darmory.py) — the `wow_events` tool answers
+"what's on the in-game calendar": holidays, bonus events, PvP brawls,
+Darkmoon Faire, and micro-holidays, sourced from darmory.com's event
+database (Blizzard's web API has no calendar endpoint). Without a query it
+lists everything live now plus everything starting within `days` (default
+30); with a query it shows that event's next occurrences. darmory also
+publishes the same data as an iCal feed at
+`https://api.darmory.com/events/calendar/ics?region={region}`.
+
+## Discord scheduled events
+
+[`tools/discord_events.py`](tools/discord_events.py) — `discord_events_list`,
+`discord_events_create`, and `discord_events_delete` read and write the
+scheduled-event calendar of the server the conversation is happening in.
+Combined with `wow_events`, this lets the agent mirror the in-game WoW
+calendar onto Discord's events calendar. Created events are external
+events located "In-game"; times are ISO 8601 (UTC assumed when no
+offset is given).
+
+## Scheduled prompts (cron)
+
+[`cron.py`](cron.py) runs preset prompts on a cron schedule — e.g.
+"fetch update changelogs and update the knowledgebase" every Monday, or
+"sync the wow game calendar with the discord events calendar" daily.
+Jobs live in `cron.json` (see [`cron.json.example`](cron.json.example)):
+
+```json
+[
+  {
+    "name": "calendar-sync",
+    "schedule": "0 12 * * *",
+    "timezone": "America/New_York",
+    "channel_id": 123456789012345678,
+    "prompt": "Sync the in-game WoW event calendar with this server's scheduled events..."
+  }
+]
+```
+
+- `schedule` is a 5-field cron expression, evaluated in `timezone`
+  (default UTC). `channel_id` is the channel replies are posted to.
+- Each run is a fresh conversation whose history is discarded
+  afterwards; runs missed while the bot was down are skipped, not
+  replayed. The bot needs no extra permissions beyond being able to
+  message the channel (plus *Manage Events* for the calendar tools).
+- In Docker, mount the config: `-v ./cron.json:/app/cron.json:ro`
+  (uncomment the volume in [`docker-compose.yml`](docker-compose.yml)).
+
 ## Adding a tool
 
 Create a new module in the matching subpackage of [`tools/`](tools) — `core/`
-(python, clock, game knowledge), `market/` (auction/economy APIs),
-`sim/` (SimulationCraft, Raidbots), `reference/` (Wowhead embeds). The
-`@tool` decorator builds the JSON schema from type hints automatically:
+(python, clock, knowledge base), `market/` (auction/economy APIs),
+`progression/` (character & guild APIs), `sim/` (SimulationCraft, Raidbots),
+`reference/` (Wowhead, guides, news, event calendar), or the top level for
+Discord-side tools (`discord_events.py`). The `@tool` decorator builds the
+JSON schema from type hints automatically:
 
 ```python
 # tools/sim/fetch_stats.py

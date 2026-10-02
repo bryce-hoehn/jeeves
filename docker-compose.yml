@@ -13,9 +13,14 @@ services:
       # Persist the raidbots cache (~50 MB after the first item search)
       # so it survives container recreations.
       - raidbots-cache:/root/.cache/raidbots
+      # Persist the agent's markdown knowledge base (kb_* tools).
+      - ./knowledge:/app/knowledge
       # Optional external MCP servers. Uncomment if you use mcp.json —
       # stdio server commands must be available inside the container.
       # - ./mcp.json:/app/mcp.json:ro
+      # Scheduled prompts (see cron.json.example). Uncomment once cron.json
+      # exists; edit jobs without rebuilding the image.
+      # - ./cron.json:/app/cron.json:ro
 
 volumes:
   raidbots-cache:

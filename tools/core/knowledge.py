@@ -1,9 +1,12 @@
 """Knowledge base — persistent markdown notes the agent can read and write.
 
 A simple folder of markdown files (default `knowledge/`, override with the
-KNOWLEDGE_DIR env var). The agent uses it to remember things across
-conversations: user preferences, market watchlists, summaries of guides it
-has scraped, decisions made earlier, anything worth recalling later.
+KNOWLEDGE_DIR env var). The knowledge base is a long-term library of
+universal verified truths, NOT a notebook for individual conversations:
+stable game-mechanics/lore facts, "where to find it" pointers (topic →
+tool/API), and timestamped long-term market data. One-off conversation
+output (plans, session summaries, user preferences, unverified claims)
+does not belong here — the write-tool docstrings enforce this policy.
 
 Names are single path components (`flipping-notes`, `asmongold-gear.md`) —
 the `.md` extension is added automatically and path traversal is rejected.
@@ -54,7 +57,7 @@ def _stamp(path: Path) -> str:
 
 @tool
 def kb_list() -> str:
-    """List every note in the knowledge base: name, last-modified time, size, and title. The knowledge base persists across conversations — check it at the start of a task to see what's already known, and write new findings with kb_write."""
+    """List every note in the knowledge base: name, last-modified time, size, and title. Check it at the start of a task to see what's already known. Writing is restricted to universal verified facts only — see the kb_write policy."""
     notes = sorted(_dir().glob("*.md"))
     if not notes:
         return (
@@ -87,7 +90,7 @@ def kb_read(name: str) -> str:
 
 @tool
 def kb_write(name: str, content: str) -> str:
-    """Create or overwrite a knowledge-base note (markdown). The note persists across conversations — use it to save anything worth remembering later: user preferences, watchlists, conclusions from research, how-tos discovered in this chat. Convention: start the note with a '# Title' heading. The .md extension is added automatically."""
+    """Create or overwrite a knowledge-base note (markdown), for UNIVERSAL VERIFIED FACTS only — content that stays true for months and was verified with a tool in this conversation: (1) stable game knowledge (broad mechanics like warbands, dungeon/boss mechanics, lore, expansion/patch overviews), (2) "where to find it" notes mapping a topic to the tool/API/site that answers it, (3) long-term market trend records. NOT for one-off conversation output: no plans, to-do lists, answers to one-off questions, session summaries, user preferences, character specifics, or anything from training data you couldn't verify. When in doubt, don't write. Convention: start the note with a '# Title' heading and cite the source of each fact. The .md extension is added automatically."""
     if len(content.encode("utf-8")) > MAX_WRITE_BYTES:
         return f"Note too large ({len(content):,} chars) — keep notes under 256 KB."
     path = _resolve(name)
@@ -99,7 +102,7 @@ def kb_write(name: str, content: str) -> str:
 
 @tool
 def kb_append(name: str, content: str) -> str:
-    """Append text to a knowledge-base note, creating it if it doesn't exist. Ideal for logs and running records (price observations, kill history) — each append becomes a new line block at the end of the note."""
+    """Append text to a knowledge-base note, creating it if it doesn't exist. For timestamped long-term records of VERIFIED observations (e.g. market prices with source and date) — same policy as kb_write: universal verified facts only, never one-off conversation output or unverified claims. Prefix each entry with its date; each append becomes a new line block at the end of the note."""
     path = _resolve(name)
     existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
     combined = existing + content if existing.endswith("\n") or not existing else existing + "\n" + content
@@ -112,7 +115,7 @@ def kb_append(name: str, content: str) -> str:
 
 @tool
 def kb_search(query: str) -> str:
-    """Search every knowledge-base note for a (case-insensitive) term; returns the notes that match with each matching line shown. Use before writing a note to avoid duplicates, and to find what's known about a topic."""
+    """Search every knowledge-base note for a (case-insensitive) term; returns the notes that match with each matching line shown. Use it to find what's already known about a topic before researching, and before writing a note to avoid duplicates."""
     q = query.lower()
     hits = []
     for path in sorted(_dir().glob("*.md")):

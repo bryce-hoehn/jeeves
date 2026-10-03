@@ -72,6 +72,56 @@ async def discord_events_create(
 
 
 @tool
+async def discord_events_edit(
+    channel,
+    name: str,
+    new_name: str = "",
+    start_time: str = "",
+    end_time: str = "",
+    description: str = "",
+) -> str:
+    """Edit an existing scheduled event on this Discord server's calendar, matching by name (case-insensitive, partial match ok). Only the fields provided are changed: new_name, start_time, end_time (ISO 8601, e.g. '2026-10-18T10:00:00Z' — UTC assumed when no offset is given), and description."""
+    if not channel.guild:
+        return "Scheduled events only exist in servers, not DMs."
+    events = await channel.guild.fetch_scheduled_events()
+    needle = name.strip().lower()
+    matches = [ev for ev in events if needle in ev.name.lower()]
+    if not matches:
+        return f"No scheduled event matching '{name}'."
+    kwargs: dict = {}
+    if new_name:
+        kwargs["name"] = new_name[:100]
+    if start_time:
+        kwargs["start_time"] = _parse_time(start_time)
+    if end_time:
+        kwargs["end_time"] = _parse_time(end_time)
+    if description:
+        kwargs["description"] = description[:1000]
+    if not kwargs:
+        return "Nothing to change — provide at least one of new_name, start_time, end_time, description."
+    # Validate start < end against the merged (old + new) times before editing.
+    new_start = kwargs.get("start_time") or matches[0].start_time
+    new_end = kwargs.get("end_time") or matches[0].end_time
+    if new_end and new_end < new_start:
+        return (
+            f"That would put the end ({_fmt_time(new_end)}) before the start"
+            f" ({_fmt_time(new_start)}) — adjust both times."
+        )
+    try:
+        for ev in matches:
+            await ev.edit(**kwargs)
+    except discord.HTTPException as exc:
+        return f"Discord rejected the edit: {exc}"
+    when = (
+        f"{_fmt_time(new_start)} → {_fmt_time(new_end)}"
+        if new_end
+        else _fmt_time(new_start)
+    )
+    label = kwargs.get("name") or matches[0].name
+    return f"Edited {len(matches)} event(s) → '{label}': {when}."
+
+
+@tool
 async def discord_events_delete(channel, name: str) -> str:
     """Delete a scheduled event from this Discord server's calendar, matching by name (case-insensitive, partial match ok). Returns the events removed."""
     if not channel.guild:

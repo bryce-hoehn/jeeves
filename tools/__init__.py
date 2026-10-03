@@ -11,6 +11,8 @@ the agent can offer it to the model.
 - reference/   — Wowhead tooltips/pages, Icy Veins & wow.gg guides, WoW wiki,
                   news & hotfix feeds, darmory event calendar
 - discord_events.py — this Discord server's scheduled-event calendar
+- discord_chat.py  — Discord users & channels: user lookup, DMs,
+                     channel listing, reading chat history
 
 Shared plumbing (registered as tools themselves? no): tools/web.py is the
 single HTTP layer — browser-UA session with retries, page cache,
@@ -59,7 +61,7 @@ def tool(fn):
 
 
 # Importing these modules registers their tools.
-from tools import discord_events  # noqa: E402, F401
+from tools import discord_chat, discord_events  # noqa: E402, F401
 from tools.core import clock, knowledge, python  # noqa: E402, F401
 from tools.market import auctions, realms, token, undermine  # noqa: E402, F401
 from tools.progression import blizzard, raiderio, warcraftlogs  # noqa: E402, F401

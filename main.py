@@ -17,6 +17,7 @@ log = logging.getLogger("jeeves")
 
 intents = discord.Intents.default()
 intents.message_content = True  # also enable this in the Discord Developer Portal
+intents.members = True  # likewise — needed for user lookup by name
 
 bot = discord.Bot(intents=intents)
 

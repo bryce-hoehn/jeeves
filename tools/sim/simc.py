@@ -281,7 +281,6 @@ def simc_armory_simulate(
     options = _common_options(
         fight_style, iterations, threads, scale_factors, extra_options
     )
-    options.append(f"armory={region},{realm.strip()},{character.strip()}")
 
     # Armory downloads need Blizzard API credentials. Recent simc removed the
     # apisecret option and its built-in shared key no longer works, so fetch
@@ -294,6 +293,10 @@ def simc_armory_simulate(
             f"Armory authorization unavailable: {exc}. "
             "Use simc_simulate with a /simc addon export instead."
         )
+
+    # simc parses options sequentially and armory= downloads the character
+    # the moment it is parsed — apitoken= must come BEFORE armory=.
+    options.append(f"armory={region},{realm.strip()},{character.strip()}")
 
     with tempfile.TemporaryDirectory(prefix="simc-") as tmp:
         html_path = Path(tmp) / "report.html"

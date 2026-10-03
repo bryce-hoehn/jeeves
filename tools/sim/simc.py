@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Literal
 
 from tools import tool
+from tools.market.blizzard import oauth_token
 
 MAX_OUTPUT_CHARS = 4000
 EPHEMR_API_URL = "https://ephemr.io/api/v1/pages"
@@ -276,19 +277,23 @@ def simc_armory_simulate(
     extra_options: list[str] | None = None,
     timeout: int = 900,
 ) -> str:
-    """Run a SimulationCraft simulation on a character imported from the Blizzard armory, e.g. region "us", realm "stormrage", character "Coffee". Uses BLIZZARD_CLIENT_ID/SECRET to authorize with the Blizzard API (the same free develop.battle.net credentials the realm tools use); without them simc falls back to its built-in key, which may fail with "Unable to fetch bearer". Prefer simc_simulate with a /simc addon export when available — it is more reliable than armory import."""
+    """Run a SimulationCraft simulation on a character imported from the Blizzard armory, e.g. region "us", realm "stormrage", character "Coffee". Fetches a Blizzard API token with BLIZZARD_CLIENT_ID/SECRET (the same free develop.battle.net credentials the realm tools use) and passes it to simc via apitoken=. Prefer simc_simulate with a /simc addon export when available — it is more reliable than armory import."""
     options = _common_options(
         fight_style, iterations, threads, scale_factors, extra_options
     )
     options.append(f"armory={region},{realm.strip()},{character.strip()}")
 
-    # Armory downloads need Blizzard API credentials — simc's built-in shared
-    # key stopped working ("Unable to authorize: Unable to fetch bearer"), so
-    # pass our own develop.battle.net client through simc's apikey/apisecret.
-    client_id = os.getenv("BLIZZARD_CLIENT_ID")
-    client_secret = os.getenv("BLIZZARD_CLIENT_SECRET")
-    if client_id and client_secret:
-        options += [f"apikey={client_id}", f"apisecret={client_secret}"]
+    # Armory downloads need Blizzard API credentials. Recent simc removed the
+    # apisecret option and its built-in shared key no longer works, so fetch
+    # a client-credentials token ourselves (the same working path the realm
+    # and progression tools use) and hand it to simc via apitoken=.
+    try:
+        options.append(f"apitoken={oauth_token()}")
+    except RuntimeError as exc:
+        return (
+            f"Armory authorization unavailable: {exc}. "
+            "Use simc_simulate with a /simc addon export instead."
+        )
 
     with tempfile.TemporaryDirectory(prefix="simc-") as tmp:
         html_path = Path(tmp) / "report.html"
@@ -303,11 +308,8 @@ def simc_armory_simulate(
         proc.stdout, proc.stderr, proc.returncode, time.monotonic() - started
     ) + link
     if "Unable to authorize" in proc.stdout or "Unable to fetch bearer" in proc.stdout:
-        if not (client_id and client_secret):
-            result += (
-                "\n\nArmory authorization failed. Set BLIZZARD_CLIENT_ID and "
-                "BLIZZARD_CLIENT_SECRET (free at https://develop.battle.net) "
-                "so this tool can pass them to simc, or use simc_simulate "
-                "with a /simc addon export instead."
-            )
+        result += (
+            "\n\nArmory authorization failed. Use simc_simulate with a "
+            "/simc addon export instead."
+        )
     return result

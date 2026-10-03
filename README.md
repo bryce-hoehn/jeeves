@@ -2,8 +2,9 @@
 
 A Discord bot that chats with an AI. Tools are built-in Python functions in
 the `tools/` package plus any external MCP servers configured in
-[`mcp.json`](mcp.json.example), and conversations continue across messages
-via the OpenAI Responses API's `previous_response_id`.
+[`mcp.json`](mcp.json.example). Each conversation keeps an in-memory
+transcript that is resent in full every turn; after a restart the transcript
+is rebuilt from the thread's Discord history.
 
 ## Setup
 
@@ -68,6 +69,8 @@ commands available inside the container. To persist the raidbots cache
 - Every message inside one of the bot's threads continues that thread's
   conversation.
 - Send `!reset` in a thread to start that conversation over.
+- If the bot restarts, existing threads and DMs pick up where they left
+  off — the conversation is rebuilt from the channel's message history.
 
 ## Undermine Exchange tools
 
@@ -112,7 +115,7 @@ SIMC_PATH=/path/to/simc
 |---|---|
 | `simc_check` | Verify simc is installed; report its version. |
 | `simc_simulate` | Sim a `/simc` addon export (or any profile) — supports fight styles, iteration counts, stat weights (`scale_factors`), profileset comparisons, raw simc options via `extra_options`, and `json_output=true` for structured mean/SE results (feed into the `python` tool for A/B significance testing). |
-| `simc_armory_simulate` | Same, importing the character straight from the Blizzard armory. Armory downloads pass your `BLIZZARD_CLIENT_ID`/`SECRET` to simc (`apikey=`/`apisecret=`) — without them simc's built-in shared key fails with "Unable to fetch bearer". |
+| `simc_armory_simulate` | Same, importing the character straight from the Blizzard armory. The tool fetches a Blizzard API token itself (via `BLIZZARD_CLIENT_ID`/`SECRET`) and passes it to simc as `apitoken=` — recent simc builds removed `apisecret=` and their built-in shared key no longer works. |
 
 Sims are synchronous and can take minutes at high iteration counts; the tool
 returns the report's summary tables (DPS ranking / scale factors / tail),
@@ -237,34 +240,6 @@ Combined with `wow_events`, this lets the agent mirror the in-game WoW
 calendar onto Discord's events calendar. Created events are external
 events located "In-game"; times are ISO 8601 (UTC assumed when no
 offset is given).
-
-## Scheduled prompts (cron)
-
-[`cron.py`](cron.py) runs preset prompts on a cron schedule — e.g.
-"fetch update changelogs and update the knowledgebase" every Monday, or
-"sync the wow game calendar with the discord events calendar" daily.
-Jobs live in `cron.json` (see [`cron.json.example`](cron.json.example)):
-
-```json
-[
-  {
-    "name": "calendar-sync",
-    "schedule": "0 12 * * *",
-    "timezone": "America/New_York",
-    "channel_id": 123456789012345678,
-    "prompt": "Sync the in-game WoW event calendar with this server's scheduled events..."
-  }
-]
-```
-
-- `schedule` is a 5-field cron expression, evaluated in `timezone`
-  (default UTC). `channel_id` is the channel replies are posted to.
-- Each run is a fresh conversation whose history is discarded
-  afterwards; runs missed while the bot was down are skipped, not
-  replayed. The bot needs no extra permissions beyond being able to
-  message the channel (plus *Manage Events* for the calendar tools).
-- In Docker, mount the config: `-v ./cron.json:/app/cron.json:ro`
-  (uncomment the volume in [`docker-compose.yml`](docker-compose.yml)).
 
 ## Adding a tool
 

@@ -12,12 +12,14 @@ multiple sources in parallel (subagents cannot spawn further subagents).
 
 Conversations are tracked per thread (or DM channel) as an in-memory
 transcript, sent in full each turn — server-side response storage
-(previous_response_id) is unreliable behind proxies.
+(previous_response_id) is unreliable behind proxies. After a restart
+main.py rebuilds a thread's/DM's transcript from its Discord history.
 """
 
 import asyncio
 import inspect
 import json
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -32,6 +34,8 @@ client = AsyncOpenAI(
     api_key=os.getenv("OPENAI_API_KEY"), base_url=os.getenv("OPENAI_BASE_URL")
 )
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5.5")
+
+log = logging.getLogger("agent")
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are jeeves, a World of Warcraft research assistant.
@@ -135,7 +139,7 @@ async def _call_tool(name: str, raw_args: str, channel) -> str:
         args = json.loads(raw_args)
     except ValueError:
         return f"Error: invalid JSON arguments for {name}"
-    print(f"tool call: {name}({args})")
+    log.info("tool call: %s(%s)", name, str(args)[:500])
     try:
         if name in TOOLS:
             spec = TOOLS[name]
@@ -166,13 +170,22 @@ async def _agent_loop(
     """
 
     async def create(**kwargs):
-        return await client.responses.create(
+        response = await client.responses.create(
             model=MODEL,
             instructions=instructions,
             input=items,
             tools=schemas,
             **kwargs,
         )
+        if response.usage:
+            log.info(
+                "%s tokens: input=%d output=%d total=%d",
+                MODEL,
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                response.usage.total_tokens,
+            )
+        return response
 
     response = await create()
     for _ in range(max_rounds):
@@ -210,6 +223,8 @@ async def _agent_loop(
     # Force a text-only wrap-up so the user gets an answer built from
     # whatever was gathered, instead of the intermediate narration.
     response = await create(tool_choice="none")
+    if response.output_text:
+        items.append({"role": "assistant", "content": response.output_text})
     return response.output_text
 
 

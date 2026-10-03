@@ -1,9 +1,8 @@
 """Discord scheduled-event tools — read/write the guild's event calendar.
 
 These operate on the guild of the channel the conversation is happening
-in, which for cron jobs (cron.py) is the channel configured in cron.json.
-Together with wow_events (darmory) they let the agent mirror the in-game
-WoW calendar onto the Discord events calendar.
+in. Together with wow_events (darmory) they let the agent mirror the
+in-game WoW calendar onto the Discord events calendar.
 """
 
 from datetime import datetime, timezone

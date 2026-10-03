@@ -12,8 +12,10 @@ standard mcpServers format:
 """
 
 import json
+import logging
 import os
 from contextlib import AsyncExitStack
+from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
@@ -28,25 +30,32 @@ sessions: dict[str, ClientSession] = {}
 routes: dict[str, tuple[str, str]] = {}
 schemas: list[dict] = []
 
+log = logging.getLogger("mcp")
+
 
 async def start() -> None:
     """Connect to every server in mcp.json. No-op when there is no config."""
     global _stack
     if _stack is not None or not os.path.exists(CONFIG_FILE):
         return
-    servers = json.loads(open(CONFIG_FILE).read()).get("mcpServers", {})
+    try:
+        servers = json.loads(Path(CONFIG_FILE).read_text()).get("mcpServers", {})
+    except (OSError, ValueError) as exc:
+        # A broken config disables MCP tools; it must not break every turn.
+        log.error("mcp: unusable %s (%s) — external tools disabled", CONFIG_FILE, exc)
+        servers = {}
     _stack = AsyncExitStack()
     for name, conf in servers.items():
         try:
             sessions[name] = await _connect(conf)
             tools = (await sessions[name].list_tools()).tools
         except Exception as exc:
-            print(f"mcp: skipping {name!r}: {exc}")
+            log.error("mcp: skipping %r: %s", name, exc)
             continue
         for t in tools:
             full = f"{name}__{t.name}"
             if full in TOOLS or full in routes:
-                print(f"mcp: duplicate tool name {full!r}, skipping")
+                log.warning("mcp: duplicate tool name %r, skipping", full)
                 continue
             routes[full] = (name, t.name)
             schema = dict(t.input_schema)
@@ -59,7 +68,7 @@ async def start() -> None:
                     "parameters": schema,
                 }
             )
-        print(f"mcp: {name}: {len(tools)} tools")
+        log.info("mcp: %s: %d tools", name, len(tools))
 
 
 async def _connect(conf: dict) -> ClientSession:

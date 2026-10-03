@@ -5,13 +5,15 @@ import discord
 from dotenv import load_dotenv
 
 import agent
-import cron
+from tools.util import split_message
 
 load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s"
 )
+
+log = logging.getLogger("jeeves")
 
 intents = discord.Intents.default()
 intents.message_content = True  # also enable this in the Discord Developer Portal
@@ -21,11 +23,14 @@ bot = discord.Bot(intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user.name} ({bot.user.id})")
-    bot.loop.create_task(cron.scheduler(bot))
+    log.info("logged in as %s (%s)", bot.user.name, bot.user.id)
 
 
-MAX_ATTACHMENT_BYTES = 200_000
+# Attachment text goes straight into the model transcript, so keep the cap
+# small — oversized files are skipped rather than eating the context window.
+MAX_ATTACHMENT_BYTES = 20_000
+# How many messages of history to replay when rebuilding a conversation.
+BACKFILL_MESSAGE_LIMIT = 200
 
 
 def _strip_mention(text: str) -> str:
@@ -52,6 +57,45 @@ async def _attachment_text(message: discord.Message) -> str:
     return "\n".join(parts)
 
 
+async def _backfill_conversation(channel, skip_message_id: int | None) -> None:
+    """Rebuild a conversation transcript from Discord history.
+
+    Used when a message arrives in a thread/DM the bot has no in-memory
+    conversation for (i.e. after a restart): user messages become user
+    items, the bot's own text messages become assistant items (consecutive
+    chunks of one reply are joined). Embed-only messages, other bots, and
+    system notices are skipped; a historical !reset clears what came
+    before it. The message that triggered this run is skipped — run_agent
+    adds it fresh.
+    """
+    items: list[dict] = []
+    skip_bot_reply = False
+    async for msg in channel.history(
+        limit=BACKFILL_MESSAGE_LIMIT, oldest_first=True
+    ):
+        if msg.id == skip_message_id:
+            continue
+        if msg.author.id == bot.user.id:
+            if skip_bot_reply:
+                skip_bot_reply = False  # its "Conversation reset." notice
+            elif msg.content:
+                if items and items[-1]["role"] == "assistant":
+                    items[-1]["content"] += "\n" + msg.content
+                else:
+                    items.append({"role": "assistant", "content": msg.content})
+        elif not msg.author.bot and msg.content:
+            text = _strip_mention(msg.content)
+            if text == "!reset":
+                items.clear()
+                skip_bot_reply = True
+            elif text:
+                items.append({"role": "user", "content": text})
+    if len(items) > agent.MAX_HISTORY_ITEMS:
+        del items[:-agent.MAX_HISTORY_ITEMS]
+    agent.conversations[channel.id] = items
+    log.info("backfilled conversation %s: %d item(s)", channel.id, len(items))
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
@@ -69,7 +113,9 @@ async def on_message(message: discord.Message):
         if attachments:
             text = f"{text}\n{attachments}".strip()
         if text == "!reset":
-            agent.conversations.pop(channel.id, None)
+            # Set an empty transcript rather than dropping the key, so the
+            # history backfill below doesn't restore the old conversation.
+            agent.conversations[channel.id] = []
             await message.reply("Conversation reset.")
             return
         if not text:
@@ -96,11 +142,21 @@ async def on_message(message: discord.Message):
         else:
             target = channel  # DMs keep chatting in the DM channel
 
-    async with target.typing():
-        reply = await agent.run_agent(target, text)
+    try:
+        if target.id not in agent.conversations:
+            # First contact after a restart: rebuild the transcript from
+            # the thread's/DM's history so context survives restarts.
+            await _backfill_conversation(target, message.id)
+        async with target.typing():
+            reply = await agent.run_agent(target, text)
+    except Exception:
+        log.exception("agent turn failed in channel %s", target.id)
+        await target.send("Something went wrong handling that — see the logs.")
+        return
 
-    # Discord caps messages at 2000 characters.
-    for i in range(0, len(reply), 2000):
-        await target.send(reply[i : i + 2000])
+    # Discord caps messages at 2000 characters; split on markdown
+    # boundaries so formatting survives the chunking.
+    for chunk in split_message(reply or "(no reply)"):
+        await target.send(chunk)
 
 bot.run(os.environ["DISCORD_TOKEN"])

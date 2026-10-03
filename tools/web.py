@@ -61,7 +61,8 @@ class TTLCache:
 
 def request(url: str, headers: dict | None = None, data: bytes | None = None,
             params: dict | None = None, timeout: float = 20) -> requests.Response:
-    """GET (or POST when `data` is given) with retries; 4xx fail fast."""
+    """GET (or POST when `data` is given) with retries; 4xx fail fast
+    except 429, which is retried after the server's Retry-After."""
     last_error = None
     for attempt in range(3):
         try:
@@ -74,11 +75,19 @@ def request(url: str, headers: dict | None = None, data: bytes | None = None,
         except requests.HTTPError as exc:
             code = exc.response.status_code if exc.response is not None else 0
             if 400 <= code < 500:
+                if code == 429 and attempt < 2:
+                    try:  # seconds; fall back if absent or an HTTP date
+                        delay = float(exc.response.headers.get("Retry-After", ""))
+                    except ValueError:
+                        delay = 1.5 * (attempt + 1)
+                    time.sleep(min(delay, 30))
+                    continue
                 raise RuntimeError(f"HTTP {code} for {url}") from None
             last_error = exc
         except requests.RequestException as exc:  # throttling / hiccup
             last_error = exc
-        time.sleep(1.5 * (attempt + 1))
+        if attempt < 2:  # no point sleeping after the final attempt
+            time.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"could not fetch {url}: {last_error}")
 
 
